@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import PhotoCapture, { type Photo } from '../components/PhotoCapture'
 import SafetyBox from '../components/SafetyBox'
@@ -44,7 +44,8 @@ export default function ReportFound() {
   )
   return (
     <div className="page">
-      <h1>📸 ごみを見つけた</h1>
+      <Link to="/report">← 報告の選び方にもどる</Link>
+      <h1>🔍 ごみを見つけた</h1>
       <SafetyBox compact />
       <PhotoCapture photo={photo} onChange={setPhoto} />
       <h3>ごみの種類(複数選べます)</h3>

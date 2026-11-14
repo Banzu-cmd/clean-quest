@@ -1,5 +1,5 @@
 import type {
-  AdminUser, EventName, FlagRow, Metrics, MyData, NewReport, Period, Profile, RankingResult, Report,
+  AdminUser, Comment, ContentFlagRow, EventName, NewPost, Post, PostKind, FlagRow, Metrics, MyData, NewReport, Period, Profile, RankingResult, Report,
 } from '../../types'
 
 export interface Api {
@@ -17,6 +17,18 @@ export interface Api {
   blockUser(userId: string): Promise<void>
   unblockUser(userId: string): Promise<void>
   listBlocks(): Promise<{ userId: string; displayName: string }[]>
+  // みんな(募集・発信)
+  listPosts(kind?: PostKind): Promise<Post[]>
+  getPost(id: string): Promise<Post | null>
+  createPost(p: NewPost): Promise<string>
+  joinEvent(id: string): Promise<void>
+  leaveEvent(id: string): Promise<void>
+  toggleLike(id: string): Promise<boolean>
+  listComments(postId: string): Promise<Comment[]>
+  addComment(postId: string, body: string): Promise<void>
+  deleteComment(id: string): Promise<void>
+  removePost(id: string): Promise<void>
+  flagContent(type: 'post' | 'comment', id: string, reason: string): Promise<void>
   // マイページ・ゲーム
   getMe(): Promise<MyData>
   buyItem(itemKey: string, slot: number): Promise<void>
@@ -32,6 +44,8 @@ export interface Api {
   adminSetHidden(id: string, hidden: boolean): Promise<void>
   adminFlags(): Promise<FlagRow[]>
   adminResolveFlag(id: number, hide: boolean): Promise<void>
+  adminContentFlags(): Promise<ContentFlagRow[]>
+  adminResolveContentFlag(id: number, hide: boolean): Promise<void>
   adminMetrics(): Promise<Metrics>
   adminUsers(): Promise<AdminUser[]>
   adminSuspend(userId: string, suspend: boolean): Promise<void>

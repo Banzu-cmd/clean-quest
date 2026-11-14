@@ -10,10 +10,13 @@ export const RULES = {
   accuracyWarnM: 100,
   rankingMinUsers: 30,
   nearDuplicateM: 20,
+  postDailyCap: 5,
+  commentDailyCap: 30,
+  eventMaxDaysAhead: 90,
 }
-export const POINTS = { found: 10, collected: 30 }
-export const XP = { found: 10, collected: 30 }
-export const COINS = { found: 5, collected: 15 }
+export const POINTS = { found: 10, collected: 30, oneshot: 40 }
+export const XP = { found: 10, collected: 30, oneshot: 40 }
+export const COINS = { found: 5, collected: 15, oneshot: 20 }
 
 export const TRASH_TAGS = [
   'プラスチック', '漁具・ロープ', 'ペットボトル・缶', '吸い殻',
