@@ -27,6 +27,11 @@ npm run demo     # (Windowsでも動く) http://localhost:5173 。Supabase不要
 - 禁止語フィルタはありません。通報と管理者の目視が頼りです。
 - 募集・発信は今のところ地図には表示されません(「地図で見る」でOpenStreetMapが開きます)。
 
+## Cloudflare Pages で公開
+- Build command: `npm run build` ・ Output directory: `dist`
+- 環境変数に `VITE_SUPABASE_URL` と `VITE_SUPABASE_ANON_KEY` を設定(Productionに)
+- `public/_redirects` は、画面のURLを直接開いても動かすための設定
+
 ## Google Play へ
 - 個人の開発者アカウントは **12人以上が14日連続でクローズドテスト** に参加しないと本番公開できない(2023-11-13以降に作成した個人アカウント)。テスター15〜20人を先に集める
 - まずWeb(PWA)で配り、並行してクローズドテストを進める
