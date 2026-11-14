@@ -24,6 +24,7 @@ export interface Report {
   tags: string[]
   note: string | null
   parentId: string | null
+  oneShot: boolean
   isCollected: boolean
   hidden: boolean
   riskFlags: string[]
@@ -42,6 +43,7 @@ export interface NewReport {
   note: string
   parentId: string | null
   disposedConfirmed: boolean
+  oneShot?: boolean
 }
 
 export interface Badge { key: string; name: string; description: string; emoji: string; owned: boolean }
@@ -82,3 +84,61 @@ export interface Metrics {
 }
 export type EventName = 'visit' | 'open_report' | 'open_collect'
 export type Period = 'week' | 'month'
+
+export type PostKind = 'event' | 'alert'
+export interface Post {
+  id: string
+  kind: PostKind
+  authorId: string
+  authorName: string
+  title: string
+  body: string
+  lat: number
+  lng: number
+  placeName: string
+  startsAt: string | null
+  capacity: number | null
+  photoUrl: string | null
+  canceled: boolean
+  createdAt: string
+  likeCount: number
+  commentCount: number
+  participantCount: number
+  liked: boolean
+  joined: boolean
+  isMine: boolean
+}
+export interface NewPost {
+  kind: PostKind
+  title: string
+  body: string
+  lat: number
+  lng: number
+  placeName: string
+  startsAt: string | null
+  capacity: number | null
+  photo: Blob | null
+  safetyAck: boolean
+}
+export interface Comment {
+  id: string
+  postId: string
+  authorId: string
+  authorName: string
+  body: string
+  createdAt: string
+  isMine: boolean
+}
+export interface ContentFlagRow {
+  id: number
+  targetType: 'post' | 'comment'
+  targetId: string
+  reason: string
+  createdAt: string
+  hidden: boolean
+  authorName: string
+  title: string | null
+  kind: PostKind | null
+  body: string
+  photoUrl: string | null
+}

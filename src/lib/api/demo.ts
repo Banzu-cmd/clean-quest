@@ -4,7 +4,7 @@ import { COINS, levelForXp, POINTS, RULES, XP, HAZARD_TAG } from '../../config'
 import { haversineM } from '../geo'
 import { blobToDataUrl } from '../image'
 import type {
-  AdminUser, Badge, EventName, FlagRow, LedgerRow, Metrics, MyData, NewReport, Period, Profile,
+  AdminUser, Badge, Comment, ContentFlagRow, EventName, FlagRow, LedgerRow, Metrics, MyData, NewPost, NewReport, Period, Post, PostKind, Profile,
   Quest, RankingResult, Report, ShopItem,
 } from '../../types'
 import type { Api } from './types'
@@ -41,12 +41,40 @@ interface DB {
   blocks: string[]
   suspended: string[]
   events: { client: string; name: EventName }[]
+  posts: PostRec[]
+  comments: CommentRec[]
+  likes: string[] // `${postId}`(自分のいいね)
+  joined: string[] // 自分が参加している募集
+  cflags: { id: number; type: 'post' | 'comment'; targetId: string; reason: string; createdAt: string; open: boolean; by: string }[]
   seq: number
 }
+interface PostRec {
+  id: string; kind: PostKind; authorId: string; authorName: string; title: string; body: string
+  lat: number; lng: number; placeName: string; startsAt: string | null; capacity: number | null
+  photoUrl: string | null; canceled: boolean; hidden: boolean; createdAt: string
+  baseLikes: number; baseParticipants: number
+}
+interface CommentRec { id: string; postId: string; authorId: string; authorName: string; body: string; createdAt: string; hidden: boolean }
 
 function placeholder(label: string, color: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="100%" height="100%" fill="${color}"/><text x="50%" y="52%" font-size="28" text-anchor="middle" fill="#fff" font-family="sans-serif">${label}</text></svg>`
   return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg)
+}
+
+function socialSeed(now: number) {
+  const day = 86400e3
+  const posts: PostRec[] = [
+    { id: 'p1', kind: 'event', authorId: 'u1', authorName: 'さくら', title: '井の頭公園の池まわりを30分だけ掃除', body: '軍手とごみ袋は用意します。できる人だけ気軽にどうぞ。',
+      lat: 35.6999, lng: 139.5717, placeName: '井の頭恩賜公園 七井橋あたり', startsAt: new Date(now + 3 * day).toISOString(), capacity: 10,
+      photoUrl: null, canceled: false, hidden: false, createdAt: new Date(now - 3600e3).toISOString(), baseLikes: 2, baseParticipants: 3 },
+    { id: 'p2', kind: 'alert', authorId: 'u2', authorName: 'たろう', title: '駅北側の植え込み、ペットボトルがかなり多いです', body: '昨日の夜に増えた気がします。',
+      lat: 35.7048, lng: 139.5812, placeName: '吉祥寺駅北口', startsAt: null, capacity: null,
+      photoUrl: placeholder('ごみが多い', '#8a6d4b'), canceled: false, hidden: false, createdAt: new Date(now - 5 * 3600e3).toISOString(), baseLikes: 4, baseParticipants: 0 },
+  ]
+  const comments: CommentRec[] = [
+    { id: 'c1', postId: 'p2', authorId: 'u3', authorName: 'みどり', body: '私も見ました。今度の募集で行きます!', createdAt: new Date(now - 3 * 3600e3).toISOString(), hidden: false },
+  ]
+  return { posts, comments, likes: [] as string[], joined: [] as string[], cflags: [] as DB['cflags'] }
 }
 
 function seed(): DB {
@@ -54,7 +82,7 @@ function seed(): DB {
   const mk = (i: number, name: string, lat: number, lng: number, tags: string[], status: Rec['status'] = 'approved'): Rec => ({
     id: 's' + i, userId: 'u' + i, userName: name, type: 'found', status, lat, lng, accuracyM: 12,
     photoUrl: placeholder(tags[0], '#6b7f8c'), photoHash: 'seed' + i, tags, note: null, parentId: null,
-    isCollected: false, hidden: false, riskFlags: [], rejectReason: null, createdAt: new Date(now - i * 3600e3).toISOString(),
+    oneShot: false, isCollected: false, hidden: false, riskFlags: [], rejectReason: null, createdAt: new Date(now - i * 3600e3).toISOString(),
   })
   return {
     me: { name: 'デモユーザー', accepted: false, showInRanking: true, signedIn: false, xp: 0, coins: 0 },
@@ -64,14 +92,23 @@ function seed(): DB {
       mk(3, 'みどり', 35.7021, 139.5775, ['プラスチック', 'その他']),
       mk(4, 'けんじ', 35.7066, 139.5786, ['大型ごみ'], 'pending'),
     ],
-    ledger: [], badges: [], town: [], claims: [], flags: [], blocks: [], suspended: [], events: [], seq: 100,
+    ledger: [], badges: [], town: [], claims: [], flags: [], blocks: [], suspended: [], events: [],
+    ...socialSeed(now), seq: 100,
   }
 }
 
 function load(): DB {
   try {
     const raw = localStorage.getItem(KEY)
-    if (raw) return JSON.parse(raw) as DB
+    if (raw) {
+      const d = JSON.parse(raw) as DB
+      // 旧バージョンで保存されたデータに新しい項目を補う
+      const fill = socialSeed(Date.now())
+      if (!d.posts) { d.posts = fill.posts; d.comments = fill.comments }
+      d.comments ??= []; d.likes ??= []; d.joined ??= []; d.cflags ??= []
+      d.reports.forEach((r) => { r.oneShot ??= false })
+      return d
+    }
   } catch { /* 破損時は作り直す */ }
   return seed()
 }
@@ -93,6 +130,19 @@ export async function createDemoApi(): Promise<Api> {
   })
   const mine = () => db.reports.filter((r) => r.userId === ME)
   const need = () => { if (!db.me.signedIn) throw new Error('NOT_AUTHORIZED') }
+
+  const socialGuard = () => {
+    need()
+    if (!db.me.accepted) throw new Error('TERMS_REQUIRED')
+  }
+  const participants = (p: PostRec) => p.baseParticipants + (db.joined.includes(p.id) ? 1 : 0)
+  const toPost = (p: PostRec): Post => ({
+    id: p.id, kind: p.kind, authorId: p.authorId, authorName: p.authorName, title: p.title, body: p.body,
+    lat: p.lat, lng: p.lng, placeName: p.placeName, startsAt: p.startsAt, capacity: p.capacity, photoUrl: p.photoUrl,
+    canceled: p.canceled, createdAt: p.createdAt, likeCount: p.baseLikes + (db.likes.includes(p.id) ? 1 : 0),
+    commentCount: db.comments.filter((c) => c.postId === p.id && !c.hidden).length, participantCount: participants(p),
+    liked: db.likes.includes(p.id), joined: db.joined.includes(p.id), isMine: p.authorId === ME,
+  })
 
   function awardBadges() {
     const m = mine()
@@ -150,11 +200,12 @@ export async function createDemoApi(): Promise<Api> {
       if (mine().filter((r) => new Date(r.createdAt).getTime() >= dayStart).length >= RULES.dailyCap) throw new Error('DAILY_CAP')
       const last = mine().at(-1)
       if (last && Date.now() - new Date(last.createdAt).getTime() < 10_000) throw new Error('RATE_LIMIT')
-      if (n.type === 'found' && n.tags.length === 0) throw new Error('TAG_REQUIRED')
+      if (n.oneShot && n.type !== 'collected') throw new Error('INVALID_TYPE')
+      if ((n.type === 'found' || n.oneShot) && n.tags.length === 0) throw new Error('TAG_REQUIRED')
       if (n.type === 'collected') {
         if (!n.disposedConfirmed) throw new Error('DISPOSAL_CONFIRM_REQUIRED')
         if (n.tags.includes(HAZARD_TAG)) throw new Error('HAZARD_NOT_COLLECTIBLE')
-        if (n.parentId) {
+        if (n.parentId && !n.oneShot) {
           const p = db.reports.find((r) => r.id === n.parentId)
           if (!p || p.type !== 'found' || p.status !== 'approved' || p.hidden) throw new Error('INVALID_PARENT')
           if (p.tags.includes(HAZARD_TAG)) throw new Error('HAZARD_NOT_COLLECTIBLE')
@@ -170,7 +221,7 @@ export async function createDemoApi(): Promise<Api> {
       const rec: Rec = {
         id: 'r' + db.seq++, userId: ME, userName: db.me.name, type: n.type, status: dup ? 'rejected' : 'pending',
         lat: n.lat, lng: n.lng, accuracyM: n.accuracyM, photoUrl: await blobToDataUrl(n.photo), photoHash: n.photoHash,
-        tags: n.tags, note: n.note || null, parentId: n.type === 'collected' ? n.parentId : null, isCollected: false, hidden: false,
+        tags: n.tags, note: n.note || null, parentId: n.type === 'collected' && !n.oneShot ? n.parentId : null, oneShot: !!n.oneShot, isCollected: false, hidden: false,
         riskFlags: risk, rejectReason: dup ? '同じ場所で短時間に同種の報告があるため、自動的に対象外になりました' : null,
         createdAt: new Date().toISOString(),
       }
@@ -190,6 +241,100 @@ export async function createDemoApi(): Promise<Api> {
     async unblockUser(userId) { db.blocks = db.blocks.filter((b) => b !== userId); commit() },
     async listBlocks() {
       return db.blocks.map((b) => ({ userId: b, displayName: db.reports.find((r) => r.userId === b)?.userName ?? 'ユーザー' }))
+    },
+
+    async listPosts(kind) {
+      need()
+      const limit = Date.now() - 86400e3
+      return db.posts
+        .filter((p) => !p.hidden && !db.blocks.includes(p.authorId) && (!kind || p.kind === kind) &&
+          (p.kind !== 'event' || new Date(p.startsAt!).getTime() >= limit))
+        .map(toPost)
+        .sort((a, b) => a.kind === 'event' && b.kind === 'event'
+          ? new Date(a.startsAt!).getTime() - new Date(b.startsAt!).getTime()
+          : b.createdAt.localeCompare(a.createdAt))
+    },
+    async getPost(id) { need(); const p = db.posts.find((x) => x.id === id && !x.hidden); return p ? toPost(p) : null },
+    async createPost(n: NewPost) {
+      socialGuard()
+      if (!n.safetyAck) throw new Error('SAFETY_ACK_REQUIRED')
+      if (n.kind !== 'event' && n.kind !== 'alert') throw new Error('INVALID_KIND')
+      if (!n.title.trim()) throw new Error('TITLE_REQUIRED')
+      if (n.kind === 'event') {
+        const t = n.startsAt ? new Date(n.startsAt).getTime() : NaN
+        if (!(t > Date.now())) throw new Error('EVENT_IN_PAST')
+        if (t > Date.now() + RULES.eventMaxDaysAhead * 86400e3) throw new Error('EVENT_TOO_FAR')
+      } else if (!n.photo) throw new Error('PHOTO_REQUIRED')
+      const today = new Date(Date.now() + 9 * 3600e3); today.setUTCHours(0, 0, 0, 0)
+      const dayStart = today.getTime() - 9 * 3600e3
+      const mineToday = db.posts.filter((p) => p.authorId === ME && new Date(p.createdAt).getTime() >= dayStart)
+      if (mineToday.length >= RULES.postDailyCap) throw new Error('POST_DAILY_CAP')
+      const last = mineToday.at(-1)
+      if (last && Date.now() - new Date(last.createdAt).getTime() < 20_000) throw new Error('RATE_LIMIT')
+      const rec: PostRec = {
+        id: 'p' + db.seq++, kind: n.kind, authorId: ME, authorName: db.me.name, title: n.title.trim(), body: n.body,
+        lat: n.lat, lng: n.lng, placeName: n.placeName, startsAt: n.kind === 'event' ? n.startsAt : null,
+        capacity: n.kind === 'event' ? n.capacity : null, photoUrl: n.photo ? await blobToDataUrl(n.photo) : null,
+        canceled: false, hidden: false, createdAt: new Date().toISOString(), baseLikes: 0, baseParticipants: 0,
+      }
+      db.posts.push(rec)
+      if (rec.kind === 'event') db.joined.push(rec.id)
+      commit()
+      return rec.id
+    },
+    async joinEvent(id) {
+      socialGuard()
+      const p = db.posts.find((x) => x.id === id && x.kind === 'event')
+      if (!p || p.hidden) throw new Error('NOT_FOUND')
+      if (p.canceled || new Date(p.startsAt!).getTime() <= Date.now()) throw new Error('EVENT_ENDED')
+      if (db.joined.includes(id)) return
+      if (p.capacity != null && participants(p) >= p.capacity) throw new Error('EVENT_FULL')
+      db.joined.push(id); commit()
+    },
+    async leaveEvent(id) {
+      socialGuard()
+      const p = db.posts.find((x) => x.id === id)
+      if (p?.authorId === ME) throw new Error('ORGANIZER_CANNOT_LEAVE')
+      db.joined = db.joined.filter((x) => x !== id); commit()
+    },
+    async toggleLike(id) {
+      socialGuard()
+      if (!db.posts.some((x) => x.id === id && !x.hidden)) throw new Error('NOT_FOUND')
+      const on = !db.likes.includes(id)
+      db.likes = on ? [...db.likes, id] : db.likes.filter((x) => x !== id); commit()
+      return on
+    },
+    async listComments(postId): Promise<Comment[]> {
+      need()
+      return db.comments.filter((c) => c.postId === postId && !c.hidden && !db.blocks.includes(c.authorId))
+        .map((c) => ({ ...c, isMine: c.authorId === ME }))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    },
+    async addComment(postId, body) {
+      socialGuard()
+      const b = body.trim()
+      if (b.length < 1 || b.length > 300) throw new Error('COMMENT_INVALID')
+      if (!db.posts.some((x) => x.id === postId && !x.hidden)) throw new Error('NOT_FOUND')
+      db.comments.push({ id: 'c' + db.seq++, postId, authorId: ME, authorName: db.me.name, body: b, createdAt: new Date().toISOString(), hidden: false })
+      commit()
+    },
+    async deleteComment(id) { need(); db.comments = db.comments.filter((c) => !(c.id === id && c.authorId === ME)); commit() },
+    async removePost(id) {
+      need()
+      const p = db.posts.find((x) => x.id === id && x.authorId === ME)
+      if (!p) throw new Error('NOT_FOUND')
+      if (p.kind === 'event') p.canceled = true; else p.hidden = true
+      commit()
+    },
+    async flagContent(type, id, reason) {
+      socialGuard()
+      const target = type === 'post' ? db.posts.find((x) => x.id === id) : db.comments.find((x) => x.id === id)
+      if (!target) throw new Error('NOT_FOUND')
+      if (target.authorId === ME) throw new Error('OWN_REPORT')
+      if (db.cflags.some((f) => f.type === type && f.targetId === id && f.by === ME)) return
+      db.cflags.push({ id: db.seq++, type, targetId: id, reason, createdAt: new Date().toISOString(), open: true, by: ME })
+      // デモでは1人=自分だけなので、他の通報者がいる想定の自動非表示は再現しない(本番は3人で自動非表示)
+      commit()
     },
 
     async getMe(): Promise<MyData> {
@@ -254,8 +399,8 @@ export async function createDemoApi(): Promise<Api> {
         const p = db.reports.find((x) => x.id === r.parentId); if (p) p.isCollected = true
       }
       if (r.userId === ME) {
-        const k = r.type
-        db.ledger.push({ id: db.seq++, delta: POINTS[k], reason: k === 'found' ? 'ごみ発見の報告が承認されました' : 'ごみ回収の報告が承認されました', createdAt: new Date().toISOString() })
+        const k = r.oneShot ? 'oneshot' : r.type
+        db.ledger.push({ id: db.seq++, delta: POINTS[k], reason: r.oneShot ? 'その場で捨てた報告が承認されました' : k === 'found' ? 'ごみ発見の報告が承認されました' : 'ごみ回収の報告が承認されました', createdAt: new Date().toISOString() })
         db.me.xp += XP[k]; db.me.coins += COINS[k]; awardBadges()
       }
       commit()
@@ -267,8 +412,9 @@ export async function createDemoApi(): Promise<Api> {
       r.status = 'rejected'; r.rejectReason = '承認取り消し: ' + reason
       if (r.type === 'collected' && r.parentId) { const p = db.reports.find((x) => x.id === r.parentId); if (p) p.isCollected = false }
       if (r.userId === ME) {
-        db.ledger.push({ id: db.seq++, delta: -POINTS[r.type], reason: '承認が取り消されました', createdAt: new Date().toISOString() })
-        db.me.xp = Math.max(0, db.me.xp - XP[r.type]); db.me.coins = Math.max(0, db.me.coins - COINS[r.type])
+        const k = r.oneShot ? 'oneshot' : r.type
+        db.ledger.push({ id: db.seq++, delta: -POINTS[k], reason: '承認が取り消されました', createdAt: new Date().toISOString() })
+        db.me.xp = Math.max(0, db.me.xp - XP[k]); db.me.coins = Math.max(0, db.me.coins - COINS[k])
       }
       commit()
     },
@@ -282,6 +428,28 @@ export async function createDemoApi(): Promise<Api> {
     async adminResolveFlag(id, hide) {
       const f = db.flags.find((x) => x.id === id)
       if (f) { f.open = false; if (hide) { const r = db.reports.find((x) => x.id === f.reportId); if (r) r.hidden = true } }
+      commit()
+    },
+    async adminContentFlags(): Promise<ContentFlagRow[]> {
+      return db.cflags.filter((f) => f.open).map((f) => {
+        const p = f.type === 'post' ? db.posts.find((x) => x.id === f.targetId) : undefined
+        const c = f.type === 'comment' ? db.comments.find((x) => x.id === f.targetId) : undefined
+        return {
+          id: f.id, targetType: f.type, targetId: f.targetId, reason: f.reason, createdAt: f.createdAt,
+          hidden: !!(p?.hidden ?? c?.hidden), authorName: p?.authorName ?? c?.authorName ?? '', title: p?.title ?? null,
+          kind: p?.kind ?? null, body: p?.body ?? c?.body ?? '', photoUrl: p?.photoUrl ?? null,
+        }
+      })
+    },
+    async adminResolveContentFlag(id, hide) {
+      const f = db.cflags.find((x) => x.id === id)
+      if (f) {
+        f.open = false
+        if (hide) {
+          const t = f.type === 'post' ? db.posts.find((x) => x.id === f.targetId) : db.comments.find((x) => x.id === f.targetId)
+          if (t) t.hidden = true
+        }
+      }
       commit()
     },
     async adminMetrics(): Promise<Metrics> {

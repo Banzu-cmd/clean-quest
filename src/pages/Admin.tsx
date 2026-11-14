@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { errorMessage } from '../lib/errors'
-import type { AdminUser, FlagRow, Metrics, Report } from '../types'
+import type { AdminUser, ContentFlagRow, FlagRow, Metrics, Report } from '../types'
 
-type Tab = 'queue' | 'flags' | 'metrics' | 'users'
+type Tab = 'queue' | 'flags' | 'posts' | 'metrics' | 'users'
 const RISK: Record<string, string> = { duplicate_photo: '同じ写真が既にあります', low_accuracy: '位置の誤差が大きい' }
 
 function Card({ r, children }: { r: Report; children: React.ReactNode }) {
@@ -12,7 +12,7 @@ function Card({ r, children }: { r: Report; children: React.ReactNode }) {
     <div className="card review">
       <img src={r.photoUrl} alt="" />
       <div>
-        <p><b>{r.type === 'found' ? '発見' : '回収'}</b> ・ {r.tags.join('・')} ・ {r.userName}</p>
+        <p><b>{r.oneShot ? '⚡ その場で捨てた(+40pt)' : r.type === 'found' ? '発見' : '回収'}</b> ・ {r.tags.join('・')} ・ {r.userName}</p>
         {r.note && <p>{r.note}</p>}
         <p className="hint">{r.lat.toFixed(5)}, {r.lng.toFixed(5)}(誤差{r.accuracyM != null ? Math.round(r.accuracyM) + 'm' : '不明'}) ・ {new Date(r.createdAt).toLocaleString('ja-JP')}</p>
         {r.riskFlags.map((f) => <span key={f} className="chip warn">⚠ {RISK[f] ?? f}</span>)}
@@ -27,6 +27,7 @@ export default function Admin() {
   const [tab, setTab] = useState<Tab>('queue')
   const [queue, setQueue] = useState<Report[]>([])
   const [flags, setFlags] = useState<FlagRow[]>([])
+  const [cflags, setCflags] = useState<ContentFlagRow[]>([])
   const [m, setM] = useState<Metrics | null>(null)
   const [users, setUsers] = useState<AdminUser[]>([])
   const [msg, setMsg] = useState('')
@@ -35,6 +36,7 @@ export default function Admin() {
     try {
       if (tab === 'queue') setQueue(await api!.adminPending())
       if (tab === 'flags') setFlags(await api!.adminFlags())
+      if (tab === 'posts') setCflags(await api!.adminContentFlags())
       if (tab === 'metrics') setM(await api!.adminMetrics())
       if (tab === 'users') setUsers(await api!.adminUsers())
     } catch (e) { setMsg(errorMessage(e)) }
@@ -53,9 +55,9 @@ export default function Admin() {
     <div className="page">
       <h1>🛠️ 管理</h1>
       <div className="seg">
-        {(['queue', 'flags', 'metrics', 'users'] as Tab[]).map((t) => (
+        {(['queue', 'flags', 'posts', 'metrics', 'users'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-            {{ queue: '審査待ち', flags: '通報', metrics: '指標', users: 'ユーザー' }[t]}
+            {{ queue: '審査待ち', flags: '通報', posts: '投稿', metrics: '指標', users: 'ユーザー' }[t]}
           </button>
         ))}
       </div>
@@ -81,6 +83,19 @@ export default function Admin() {
               </div>
             </Card>
           ) : <p>(報告は削除済み)</p>}
+        </div>
+      )))}
+
+      {tab === 'posts' && (cflags.length === 0 ? <p className="hint">未対応の投稿・コメントの通報はありません</p> : cflags.map((f) => (
+        <div key={f.id} className="card" data-testid="content-flag">
+          <p className="hint">通報理由: {f.reason || '(なし)'} ・ {f.targetType === 'post' ? '投稿' : 'コメント'}{f.hidden && ' ・ すでに非表示'}</p>
+          <p><b>{f.title ?? ''}</b> {f.authorName && `(${f.authorName})`}</p>
+          {f.photoUrl && <img className="post-img" src={f.photoUrl} alt="" />}
+          <p className="body">{f.body}</p>
+          <div className="row">
+            <button className="btn small danger" onClick={() => run(() => api!.adminResolveContentFlag(f.id, true))}>非表示にして解決</button>
+            <button className="btn small secondary" onClick={() => run(() => api!.adminResolveContentFlag(f.id, false))}>問題なし</button>
+          </div>
         </div>
       )))}
 

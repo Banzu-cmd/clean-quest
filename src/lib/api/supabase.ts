@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '../../config'
 import type {
-  AdminUser, Badge, EventName, FlagRow, LedgerRow, Metrics, MyData, NewReport, Period, Profile,
+  AdminUser, Badge, Comment, ContentFlagRow, EventName, FlagRow, LedgerRow, Metrics, MyData, NewPost, NewReport, Period, Post, PostKind, Profile,
   Quest, RankingResult, Report, ShopItem, TownSlot,
 } from '../../types'
 import type { Api } from './types'
@@ -14,7 +14,7 @@ function mapReport(r: Row): Report {
     id: r.id, userId: r.user_id, userName: r.profiles?.display_name,
     type: r.type, status: r.status, lat: r.lat, lng: r.lng, accuracyM: r.accuracy_m,
     photoUrl: r.photo_url, tags: r.trash_tags ?? [], note: r.note, parentId: r.parent_report_id,
-    isCollected: r.is_collected, hidden: r.hidden, riskFlags: r.risk_flags ?? [],
+    oneShot: !!r.one_shot, isCollected: r.is_collected, hidden: r.hidden, riskFlags: r.risk_flags ?? [],
     rejectReason: r.reject_reason, createdAt: r.created_at,
   }
 }
@@ -56,6 +56,14 @@ export async function createSupabaseApi(): Promise<Api> {
       showInRanking: data.show_in_ranking, termsAccepted: !!data.terms_accepted_at, email: u.user.email ?? undefined,
     }
   }
+
+  const mapPost = (p: Row): Post => ({
+    id: p.id, kind: p.kind, authorId: p.author_id, authorName: p.author_name, title: p.title, body: p.body ?? '',
+    lat: p.lat, lng: p.lng, placeName: p.place_name ?? '', startsAt: p.starts_at, capacity: p.capacity,
+    photoUrl: p.photo_path ? photoUrl(p.photo_path) : null, canceled: !!p.canceled, createdAt: p.created_at,
+    likeCount: Number(p.like_count), commentCount: Number(p.comment_count), participantCount: Number(p.participant_count),
+    liked: !!p.liked, joined: !!p.joined, isMine: !!p.is_mine,
+  })
 
   const SEL = '*, profiles(display_name)'
 
@@ -100,7 +108,7 @@ export async function createSupabaseApi(): Promise<Api> {
       const { data, error } = await sb.from('reports').insert({
         user_id: id, type: r.type, lat: r.lat, lng: r.lng, accuracy_m: r.accuracyM,
         photo_path: path, photo_hash: r.photoHash, trash_tags: r.tags, note: r.note || null,
-        parent_report_id: r.parentId, disposed_confirmed: r.disposedConfirmed,
+        parent_report_id: r.parentId, disposed_confirmed: r.disposedConfirmed, one_shot: !!r.oneShot,
       }).select(SEL).single()
       if (error) {
         await sb.storage.from('report-photos').remove([path]) // 失敗時は写真も消す
@@ -115,6 +123,47 @@ export async function createSupabaseApi(): Promise<Api> {
       const rows = await rpc<Row[]>('my_blocks')
       return rows.map((r) => ({ userId: r.user_id, displayName: r.display_name }))
     },
+
+    async listPosts(kind?: PostKind) {
+      const rows = await rpc<Row[]>('list_posts', { p_kind: kind ?? null, p_id: null })
+      return rows.map(mapPost)
+    },
+    async getPost(id) {
+      const rows = await rpc<Row[]>('list_posts', { p_kind: null, p_id: id })
+      return rows[0] ? mapPost(rows[0]) : null
+    },
+    async createPost(p: NewPost) {
+      const id = await uid()
+      let path: string | null = null
+      if (p.photo) {
+        path = `${id}/post-${crypto.randomUUID()}.jpg`
+        const up = await sb.storage.from('report-photos').upload(path, p.photo, { contentType: 'image/jpeg' })
+        if (up.error) throw new Error(up.error.message)
+      }
+      try {
+        return await rpc<string>('create_post', {
+          p_kind: p.kind, p_title: p.title, p_body: p.body, p_lat: p.lat, p_lng: p.lng,
+          p_place: p.placeName, p_starts_at: p.startsAt, p_capacity: p.capacity, p_photo_path: path, p_safety_ack: p.safetyAck,
+        })
+      } catch (e) {
+        if (path) await sb.storage.from('report-photos').remove([path])
+        throw e
+      }
+    },
+    async joinEvent(id) { await rpc('join_event', { p_post: id }) },
+    async leaveEvent(id) { await rpc('leave_event', { p_post: id }) },
+    async toggleLike(id) { return rpc<boolean>('toggle_like', { p_post: id }) },
+    async listComments(postId): Promise<Comment[]> {
+      const rows = await rpc<Row[]>('list_comments', { p_post: postId })
+      return rows.map((c) => ({
+        id: c.id, postId: c.post_id, authorId: c.author_id, authorName: c.author_name,
+        body: c.body, createdAt: c.created_at, isMine: c.is_mine,
+      }))
+    },
+    async addComment(postId, body) { await rpc('add_comment', { p_post: postId, p_body: body }) },
+    async deleteComment(id) { await rpc('delete_my_comment', { p_comment: id }) },
+    async removePost(id) { await rpc('remove_my_post', { p_post: id }) },
+    async flagContent(type, id, reason) { await rpc('flag_content', { p_type: type, p_id: id, p_reason: reason }) },
 
     async getMe(): Promise<MyData> {
       const id = await uid()
@@ -187,6 +236,15 @@ export async function createSupabaseApi(): Promise<Api> {
       }))
     },
     async adminResolveFlag(id, hide) { await rpc('admin_resolve_flag', { p_flag_id: id, p_hide: hide }) },
+    async adminContentFlags(): Promise<ContentFlagRow[]> {
+      const rows = await rpc<Row[]>('admin_content_flags')
+      return rows.map((f) => ({
+        id: f.id, targetType: f.target_type, targetId: f.target_id, reason: f.reason ?? '', createdAt: f.created_at,
+        hidden: !!f.hidden, authorName: f.author_name ?? '', title: f.title ?? null, kind: f.kind ?? null,
+        body: f.body ?? '', photoUrl: f.photo_path ? photoUrl(f.photo_path) : null,
+      }))
+    },
+    async adminResolveContentFlag(id, hide) { await rpc('admin_resolve_content_flag', { p_flag: id, p_hide: hide }) },
     async adminMetrics() { return rpc<Metrics>('admin_metrics') },
     async adminUsers(): Promise<AdminUser[]> {
       const [p, r] = await Promise.all([

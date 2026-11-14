@@ -4,7 +4,12 @@ import { useAuth } from './auth'
 import Login from './pages/Login'
 import TermsGate from './pages/TermsGate'
 import Home from './pages/Home'
+import ReportHub from './pages/ReportHub'
 import ReportFound from './pages/ReportFound'
+import ReportClean from './pages/ReportClean'
+import Community from './pages/Community'
+import PostNew from './pages/PostNew'
+import PostDetail from './pages/PostDetail'
 import ReportCollected from './pages/ReportCollected'
 import Ranking from './pages/Ranking'
 import MyPage from './pages/MyPage'
@@ -19,8 +24,8 @@ function Shell() {
       <main><Outlet /></main>
       <nav className="tabbar">
         <NavLink to="/" end>🗺️<span>地図</span></NavLink>
-        <NavLink to="/report">📸<span>発見</span></NavLink>
-        <NavLink to="/collect">🧤<span>回収</span></NavLink>
+        <NavLink to="/report">📸<span>報告</span></NavLink>
+        <NavLink to="/community">👥<span>みんな</span></NavLink>
         <NavLink to="/ranking">🏆<span>ランキング</span></NavLink>
         <NavLink to="/me">🏘️<span>マイ街</span></NavLink>
         {user?.role === 'admin' && <NavLink to="/admin">🛠️<span>管理</span></NavLink>}
@@ -49,7 +54,12 @@ export default function App() {
       <Route path="/privacy" element={<Privacy />} />
       <Route element={<Guard />}>
         <Route path="/" element={<Home />} />
-        <Route path="/report" element={<ReportFound />} />
+        <Route path="/report" element={<ReportHub />} />
+        <Route path="/report/found" element={<ReportFound />} />
+        <Route path="/report/clean" element={<ReportClean />} />
+        <Route path="/community" element={<Community />} />
+        <Route path="/community/new" element={<PostNew />} />
+        <Route path="/community/:id" element={<PostDetail />} />
         <Route path="/collect" element={<ReportCollected />} />
         <Route path="/ranking" element={<Ranking />} />
         <Route path="/me" element={<MyPage />} />
