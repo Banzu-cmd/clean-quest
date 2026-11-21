@@ -109,12 +109,15 @@ export async function createSupabaseApi(): Promise<Api> {
         user_id: id, type: r.type, lat: r.lat, lng: r.lng, accuracy_m: r.accuracyM,
         photo_path: path, photo_hash: r.photoHash, trash_tags: r.tags, note: r.note || null,
         parent_report_id: r.parentId, disposed_confirmed: r.disposedConfirmed, one_shot: !!r.oneShot,
-      }).select(SEL).single()
+      }).select('id').single()
       if (error) {
         await sb.storage.from('report-photos').remove([path]) // 失敗時は写真も消す
         throw new Error(error.message)
       }
-      return withUrl(data)
+      // 自動承認は投稿の直後(DBのトリガー)に行われるので、承認後の状態を取り直す
+      const again = await sb.from('reports').select(SEL).eq('id', data.id).single()
+      if (again.error) throw new Error(again.error.message)
+      return withUrl(again.data)
     },
     async flagReport(id, reason) { await rpc('flag_report', { p_report_id: id, p_reason: reason }) },
     async blockUser(userId) { await rpc('block_user', { p_user: userId }) },
@@ -222,6 +225,14 @@ export async function createSupabaseApi(): Promise<Api> {
       if (error) throw new Error(error.message)
       return (data ?? []).map(withUrl)
     },
+    async adminAudits() {
+      const ids = await rpc<string[]>('admin_audit_ids')
+      if (!ids.length) return []
+      const { data, error } = await sb.from('reports').select(SEL).in('id', ids).order('created_at')
+      if (error) throw new Error(error.message)
+      return (data ?? []).map(withUrl)
+    },
+    async adminAudit(id, ok, reason) { await rpc('admin_audit_report', { p_report_id: id, p_ok: ok, p_reason: reason ?? null }) },
     async adminReview(id, approve, reason) { await rpc('review_report', { p_report_id: id, p_approve: approve, p_reason: reason ?? null }) },
     async adminRevoke(id, reason) { await rpc('admin_revoke_report', { p_report_id: id, p_reason: reason }) },
     async adminSetHidden(id, hidden) { await rpc('admin_set_hidden', { p_report_id: id, p_hidden: hidden }) },

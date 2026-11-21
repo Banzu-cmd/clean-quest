@@ -22,7 +22,7 @@ export default function TermsGate() {
       <SafetyBox />
       <div className="card">
         <p><b>ポイントについて:</b> この実証実験のポイントやコインに金銭的な価値はありません。現金や商品には交換できません。</p>
-        <p><b>写真と位置情報:</b> 報告した写真と場所は、運営の確認後、他の参加者に地図で表示されます。個人が写らないようにしてください。</p>
+        <p><b>写真と位置情報:</b> 報告した写真と場所は、運営の確認後(信頼できる利用者の報告は自動で承認され、あとから運営が一部を確認します)、他の参加者に地図で表示されます。個人が写らないようにしてください。</p>
         <label className="check"><input type="checkbox" checked={a} onChange={(e) => setA(e.target.checked)} />
           上の安全のルールを読み、守ります</label>
         <label className="check"><input type="checkbox" checked={b} onChange={(e) => setB(e.target.checked)} />

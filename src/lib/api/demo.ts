@@ -29,7 +29,16 @@ const QUESTS = [
 ]
 const ME = 'me'
 
-interface Rec extends Omit<Report, 'photoUrl'> { photoUrl: string; photoHash: string }
+interface Rec extends Omit<Report, 'photoUrl'> {
+  photoUrl: string; photoHash: string
+  human?: boolean            // 運営が手動で承認した
+  humanRejectedAt?: string   // 運営が却下・取り消しした時刻
+  audit?: 'pending' | 'ok' | 'ng'  // 抜き取り確認(本人には見せない)
+}
+// 自動承認の条件(本番の supabase/003_auto_approve.sql と同じ値)
+const TRUST_MIN_APPROVED = 3
+const TRUST_LOOKBACK_DAYS = 30
+const AUDIT_RATE = 0.2
 interface DB {
   me: { name: string; accepted: boolean; showInRanking: boolean; signedIn: boolean; xp: number; coins: number }
   reports: Rec[]
@@ -113,7 +122,7 @@ function load(): DB {
   return seed()
 }
 function save(db: DB) { localStorage.setItem(KEY, JSON.stringify(db)) }
-const pub = (r: Rec): Report => { const { photoHash: _h, ...rest } = r; void _h; return rest }
+const pub = (r: Rec): Report => { const { photoHash: _h, human: _a, humanRejectedAt: _b, audit: _c, ...rest } = r; void _h; void _a; void _b; void _c; return rest }
 
 function weekStart(): number {
   const jst = new Date(Date.now() + 9 * 3600e3)
@@ -129,6 +138,36 @@ export async function createDemoApi(): Promise<Api> {
     termsAccepted: db.me.accepted, email: 'demo@example.com',
   })
   const mine = () => db.reports.filter((r) => r.userId === ME)
+  const isTrusted = () => {
+    const m = mine()
+    const cutoff = Date.now() - TRUST_LOOKBACK_DAYS * 86400e3
+    return m.filter((r) => r.status === 'approved' && r.human).length >= TRUST_MIN_APPROVED
+      && !m.some((r) => r.humanRejectedAt && new Date(r.humanRejectedAt).getTime() > cutoff)
+  }
+  // 承認の本体(手動・自動で共通)。ポイントは本人の報告にだけ付ける(デモは1人分のみ)
+  const approveRec = (r: Rec, human: boolean) => {
+    r.status = 'approved'; r.human = human
+    if (r.type === 'collected' && r.parentId) {
+      const p = db.reports.find((x) => x.id === r.parentId); if (p) p.isCollected = true
+    }
+    if (r.userId === ME) {
+      const k = r.oneShot ? 'oneshot' : r.type
+      db.ledger.push({ id: db.seq++, delta: POINTS[k], reason: r.oneShot ? 'その場で捨てた報告が承認されました' : k === 'found' ? 'ごみ発見の報告が承認されました' : 'ごみ回収の報告が承認されました', createdAt: new Date().toISOString() })
+      db.me.xp += XP[k]; db.me.coins += COINS[k]; awardBadges()
+    }
+  }
+  const revokeRec = (id: string, reason: string) => {
+    if (!reason.trim()) throw new Error('REASON_REQUIRED')
+    const r = db.reports.find((x) => x.id === id)
+    if (!r || r.status !== 'approved') throw new Error('NOT_APPROVED')
+    r.status = 'rejected'; r.rejectReason = '承認取り消し: ' + reason; r.human = false; r.humanRejectedAt = new Date().toISOString()
+    if (r.type === 'collected' && r.parentId) { const p = db.reports.find((x) => x.id === r.parentId); if (p) p.isCollected = false }
+    if (r.userId === ME) {
+      const k = r.oneShot ? 'oneshot' : r.type
+      db.ledger.push({ id: db.seq++, delta: -POINTS[k], reason: '承認が取り消されました', createdAt: new Date().toISOString() })
+      db.me.xp = Math.max(0, db.me.xp - XP[k]); db.me.coins = Math.max(0, db.me.coins - COINS[k])
+    }
+  }
   const need = () => { if (!db.me.signedIn) throw new Error('NOT_AUTHORIZED') }
 
   const socialGuard = () => {
@@ -225,7 +264,14 @@ export async function createDemoApi(): Promise<Api> {
         riskFlags: risk, rejectReason: dup ? '同じ場所で短時間に同種の報告があるため、自動的に対象外になりました' : null,
         createdAt: new Date().toISOString(),
       }
-      db.reports.push(rec); commit()
+      db.reports.push(rec)
+      // 信頼できるユーザーの報告は、その場で自動承認する(リスクフラグ付きは手動審査のまま)
+      if (rec.status === 'pending' && rec.riskFlags.length === 0 && isTrusted()) {
+        const firstAuto = !db.reports.some((r) => r !== rec && r.userId === ME && r.status === 'approved' && !r.human)
+        approveRec(rec, false)
+        if (firstAuto || Math.random() < AUDIT_RATE) rec.audit = 'pending'
+      }
+      commit()
       return pub(rec)
     },
     async flagReport(id, reason) {
@@ -392,31 +438,19 @@ export async function createDemoApi(): Promise<Api> {
       if (r.status !== 'pending') throw new Error('ALREADY_REVIEWED')
       if (!approve) {
         if (!reason?.trim()) throw new Error('REASON_REQUIRED')
-        r.status = 'rejected'; r.rejectReason = reason; commit(); return
+        r.status = 'rejected'; r.rejectReason = reason; r.humanRejectedAt = new Date().toISOString(); commit(); return
       }
-      r.status = 'approved'
-      if (r.type === 'collected' && r.parentId) {
-        const p = db.reports.find((x) => x.id === r.parentId); if (p) p.isCollected = true
-      }
-      if (r.userId === ME) {
-        const k = r.oneShot ? 'oneshot' : r.type
-        db.ledger.push({ id: db.seq++, delta: POINTS[k], reason: r.oneShot ? 'その場で捨てた報告が承認されました' : k === 'found' ? 'ごみ発見の報告が承認されました' : 'ごみ回収の報告が承認されました', createdAt: new Date().toISOString() })
-        db.me.xp += XP[k]; db.me.coins += COINS[k]; awardBadges()
-      }
+      approveRec(r, true)
       commit()
     },
-    async adminRevoke(id, reason) {
-      if (!reason.trim()) throw new Error('REASON_REQUIRED')
+    async adminRevoke(id, reason) { revokeRec(id, reason); commit() },
+    async adminAudits() { return db.reports.filter((r) => r.audit === 'pending').map(pub) },
+    async adminAudit(id, ok, reason) {
       const r = db.reports.find((x) => x.id === id)
-      if (!r || r.status !== 'approved') throw new Error('NOT_APPROVED')
-      r.status = 'rejected'; r.rejectReason = '承認取り消し: ' + reason
-      if (r.type === 'collected' && r.parentId) { const p = db.reports.find((x) => x.id === r.parentId); if (p) p.isCollected = false }
-      if (r.userId === ME) {
-        const k = r.oneShot ? 'oneshot' : r.type
-        db.ledger.push({ id: db.seq++, delta: -POINTS[k], reason: '承認が取り消されました', createdAt: new Date().toISOString() })
-        db.me.xp = Math.max(0, db.me.xp - XP[k]); db.me.coins = Math.max(0, db.me.coins - COINS[k])
-      }
-      commit()
+      if (!r || !r.audit) throw new Error('NOT_FOUND')
+      if (r.audit !== 'pending') throw new Error('ALREADY_REVIEWED')
+      if (!ok) { if (!reason?.trim()) throw new Error('REASON_REQUIRED'); revokeRec(id, reason) }
+      r.audit = ok ? 'ok' : 'ng'; commit()
     },
     async adminSetHidden(id, hidden) { const r = db.reports.find((x) => x.id === id); if (r) r.hidden = hidden; commit() },
     async adminFlags(): Promise<FlagRow[]> {
@@ -463,6 +497,10 @@ export async function createDemoApi(): Promise<Api> {
         approved: db.reports.filter((r) => r.status === 'approved').length,
         rejected: db.reports.filter((r) => r.status === 'rejected').length,
         avg_review_hours: null, open_flags: db.flags.filter((f) => f.open).length,
+        auto_approved: db.reports.filter((r) => r.status === 'approved' && !r.human && r.audit).length
+          + db.reports.filter((r) => r.audit === 'ng').length,
+        audit_pending: db.reports.filter((r) => r.audit === 'pending').length,
+        audit_ng: db.reports.filter((r) => r.audit === 'ng').length,
       }
     },
     async adminUsers(): Promise<AdminUser[]> {
