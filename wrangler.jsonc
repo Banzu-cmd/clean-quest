@@ -4,5 +4,7 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
-  }
+  },
+  // PRごとのプレビュー公開(wrangler preview)に必要な空の設定
+  "previews": {}
 }
