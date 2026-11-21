@@ -4,8 +4,9 @@ import { useAuth } from '../auth'
 import PhotoCapture, { type Photo } from '../components/PhotoCapture'
 import SafetyBox from '../components/SafetyBox'
 import TagPicker from '../components/TagPicker'
-import { POINTS, RULES } from '../config'
-import { getPosition, type Fix } from '../lib/geo'
+import { POINTS } from '../config'
+import LocationStatus from '../components/LocationStatus'
+import { useLocation } from '../lib/useLocation'
 import { errorMessage } from '../lib/errors'
 
 // 見つけて、その場で拾って、捨てるところまでを1枚の写真で報告する
@@ -15,12 +16,13 @@ export default function ReportClean() {
   const [photo, setPhoto] = useState<Photo | null>(null)
   const [tags, setTags] = useState<string[]>([])
   const [confirm, setConfirm] = useState(false)
-  const [fix, setFix] = useState<Fix | null>(null)
+  const loc = useLocation()
+  const fix = loc.fix
   const [err, setErr] = useState('')
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => { api!.track('open_collect').catch(() => {}); getPosition().then(setFix).catch((e) => setErr(errorMessage(e))) }, [api])
+  useEffect(() => { api!.track('open_collect').catch(() => {}) }, [api])
 
   async function submit() {
     if (!photo || !fix) return
@@ -53,10 +55,7 @@ export default function ReportClean() {
       <TagPicker value={tags} onChange={setTags} disableHazard />
       <label className="check"><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />
         分別して、正しい場所に捨てました</label>
-      <p className="hint">
-        {fix ? `📍 位置を取得しました(誤差およそ${Math.round(fix.accuracyM)}m)` : '📍 位置を取得中…'}
-        {fix && fix.accuracyM > RULES.accuracyWarnM && ' ※誤差が大きいです。取り直すと確認されやすくなります'}
-      </p>
+      <LocationStatus loc={loc} />
       {err && <p className="err" role="alert">{err}</p>}
       <button className="btn" disabled={!photo || !fix || tags.length === 0 || !confirm || busy} onClick={submit}>
         {busy ? '送信中…' : '報告する'}

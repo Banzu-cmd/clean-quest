@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth'
 import MapView from '../components/MapView'
-import { getPosition } from '../lib/geo'
+import { getPosition, isInAppBrowser } from '../lib/geo'
 import { errorMessage } from '../lib/errors'
 import type { Report } from '../types'
 
@@ -18,7 +18,9 @@ export default function Home() {
 
   async function locate() {
     setMsg('')
-    try { const f = await getPosition(); setMe({ lat: f.lat, lng: f.lng }) } catch (e) { setMsg(errorMessage(e)) }
+    try { const f = await getPosition(); setMe({ lat: f.lat, lng: f.lng }) } catch (e) {
+      setMsg(errorMessage(e) + (isInAppBrowser() ? ' SNSアプリの中の画面では使えないことがあるので、SafariやChromeで開き直してください。' : ''))
+    }
   }
   async function flag() {
     if (!sel) return
