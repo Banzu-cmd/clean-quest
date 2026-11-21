@@ -18,6 +18,7 @@ export default function ReportFound() {
   const [fix, setFix] = useState<Fix | null>(null)
   const [err, setErr] = useState('')
   const [done, setDone] = useState(false)
+  const [auto, setAuto] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => { api!.track('open_report').catch(() => {}); getPosition().then(setFix).catch((e) => setErr(errorMessage(e))) }, [api])
@@ -26,18 +27,18 @@ export default function ReportFound() {
     if (!photo || !fix) return
     setBusy(true); setErr('')
     try {
-      await api!.submitReport({
+      const rep = await api!.submitReport({
         type: 'found', lat: fix.lat, lng: fix.lng, accuracyM: fix.accuracyM, photo: photo.blob, photoHash: photo.hash,
         tags, note, parentId: null, disposedConfirmed: false,
       })
-      setDone(true)
+      setAuto(rep.status === 'approved'); setDone(true)
     } catch (e) { setErr(errorMessage(e)) } finally { setBusy(false) }
   }
 
   if (done) return (
     <div className="page narrow center-text">
       <h1>✅ 報告しました</h1>
-      <p>運営が確認すると、ポイントがつきます。確認までしばらくお待ちください。</p>
+      {auto ? <p>承認されました。ポイントがつきました。ありがとうございます!</p> : <p>運営が確認すると、ポイントがつきます。確認までしばらくお待ちください。</p>}
       <button className="btn" onClick={() => nav('/')}>地図にもどる</button>
       <button className="btn secondary" onClick={() => { setDone(false); setPhoto(null); setTags([]); setNote('') }}>続けて報告する</button>
     </div>

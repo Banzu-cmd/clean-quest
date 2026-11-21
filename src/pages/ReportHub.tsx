@@ -18,7 +18,7 @@ export default function ReportHub() {
         <b>🧤 地図のごみを拾った</b>
         <span>地図に載っているごみを拾って捨てた。 <em>+{POINTS.collected}pt</em></span>
       </Link>
-      <p className="hint">どの報告も、運営が確認するとポイントがつきます。危険物は触らず、自治体などに連絡してください。</p>
+      <p className="hint">報告は、運営の確認(信頼できる方は自動承認)のあとにポイントがつきます。危険物は触らず、自治体などに連絡してください。</p>
     </div>
   )
 }

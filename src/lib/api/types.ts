@@ -40,6 +40,8 @@ export interface Api {
   // 管理
   adminPending(): Promise<Report[]>
   adminReview(id: string, approve: boolean, reason?: string): Promise<void>
+  adminAudits(): Promise<Report[]>
+  adminAudit(id: string, ok: boolean, reason?: string): Promise<void>
   adminRevoke(id: string, reason: string): Promise<void>
   adminSetHidden(id: string, hidden: boolean): Promise<void>
   adminFlags(): Promise<FlagRow[]>

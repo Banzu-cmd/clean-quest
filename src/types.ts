@@ -81,6 +81,7 @@ export interface Metrics {
   visits: number; signups: number; first_report: number; repeat_users: number; retained_7d: number
   weekly_active: number; reports_total: number; pending: number; approved: number; rejected: number
   avg_review_hours: number | null; open_flags: number
+  auto_approved?: number; audit_pending?: number; audit_ng?: number
 }
 export type EventName = 'visit' | 'open_report' | 'open_collect'
 export type Period = 'week' | 'month'

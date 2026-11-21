@@ -4,7 +4,7 @@ import { useAuth } from '../auth'
 import { errorMessage } from '../lib/errors'
 import type { AdminUser, ContentFlagRow, FlagRow, Metrics, Report } from '../types'
 
-type Tab = 'queue' | 'flags' | 'posts' | 'metrics' | 'users'
+type Tab = 'queue' | 'audit' | 'flags' | 'posts' | 'metrics' | 'users'
 const RISK: Record<string, string> = { duplicate_photo: '同じ写真が既にあります', low_accuracy: '位置の誤差が大きい' }
 
 function Card({ r, children }: { r: Report; children: React.ReactNode }) {
@@ -26,6 +26,7 @@ export default function Admin() {
   const { api, user } = useAuth()
   const [tab, setTab] = useState<Tab>('queue')
   const [queue, setQueue] = useState<Report[]>([])
+  const [audits, setAudits] = useState<Report[]>([])
   const [flags, setFlags] = useState<FlagRow[]>([])
   const [cflags, setCflags] = useState<ContentFlagRow[]>([])
   const [m, setM] = useState<Metrics | null>(null)
@@ -35,6 +36,7 @@ export default function Admin() {
   const load = useCallback(async () => {
     try {
       if (tab === 'queue') setQueue(await api!.adminPending())
+      if (tab === 'audit') setAudits(await api!.adminAudits())
       if (tab === 'flags') setFlags(await api!.adminFlags())
       if (tab === 'posts') setCflags(await api!.adminContentFlags())
       if (tab === 'metrics') setM(await api!.adminMetrics())
@@ -49,15 +51,19 @@ export default function Admin() {
     const reason = window.prompt('却下の理由(本人に表示されます)')
     if (reason?.trim()) run(() => api!.adminReview(id, false, reason))
   }
+  const auditNg = (id: string) => {
+    const reason = window.prompt('取り消しの理由(本人に表示されます。ポイントは戻り、しばらく手動審査になります)')
+    if (reason?.trim()) run(() => api!.adminAudit(id, false, reason))
+  }
   const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) + '%' : '-')
 
   return (
     <div className="page">
       <h1>🛠️ 管理</h1>
       <div className="seg">
-        {(['queue', 'flags', 'posts', 'metrics', 'users'] as Tab[]).map((t) => (
+        {(['queue', 'audit', 'flags', 'posts', 'metrics', 'users'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-            {{ queue: '審査待ち', flags: '通報', posts: '投稿', metrics: '指標', users: 'ユーザー' }[t]}
+            {{ queue: '審査待ち', audit: '抜き取り', flags: '通報', posts: '投稿', metrics: '指標', users: 'ユーザー' }[t]}
           </button>
         ))}
       </div>
@@ -71,6 +77,20 @@ export default function Admin() {
           </div>
         </Card>
       )))}
+
+      {tab === 'audit' && (
+        <>
+          <p className="hint">信頼できるユーザーの報告は自動で承認されます。そのうち一部を、あとから確認してください。問題があれば取り消すと、ポイントが戻り、そのユーザーはしばらく手動審査に戻ります。</p>
+          {audits.length === 0 ? <p className="hint">確認する報告はありません</p> : audits.map((r) => (
+            <Card key={r.id} r={r}>
+              <div className="row">
+                <button className="btn small" onClick={() => run(() => api!.adminAudit(r.id, true))}>問題なし</button>
+                <button className="btn small danger" onClick={() => auditNg(r.id)}>取り消す</button>
+              </div>
+            </Card>
+          ))}
+        </>
+      )}
 
       {tab === 'flags' && (flags.length === 0 ? <p className="hint">未対応の通報はありません</p> : flags.map((f) => (
         <div key={f.id}>
@@ -108,6 +128,7 @@ export default function Admin() {
           <p>登録7日後以降も報告 <b>{m.retained_7d}</b></p>
           <p>直近7日のアクティブ <b>{m.weekly_active}</b></p>
           <p>報告 合計 <b>{m.reports_total}</b> / 承認 {m.approved} / 却下 {m.rejected} / 待ち {m.pending}</p>
+          <p>自動承認 <b>{m.auto_approved ?? 0}</b> ・ 抜き取り確認待ち {m.audit_pending ?? 0} ・ 取り消し {m.audit_ng ?? 0}</p>
           <p>平均審査時間 <b>{m.avg_review_hours ?? '-'}</b> 時間 ・ 未対応の通報 {m.open_flags}</p>
         </div>
       )}
